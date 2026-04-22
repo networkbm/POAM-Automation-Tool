@@ -2,5 +2,8 @@ master_poam.xlsx
 fedramp_poam_*.xlsx
 grc_report_*.xlsx
 conmon_*.xlsx
+vdr_*.xlsx
+vdr_*.json
+test_*.xlsx
 __pycache__/
 *.pyc

@@ -1,6 +1,6 @@
-# FedRAMP POA&M GRC Tool
+# FedRAMP POA&M & 20x VDR Automation Tool
 
-A CLI tool that converts vulnerability scanner exports into a FedRAMP-compliant POA&M Excel file and manages the full finding lifecycle through the CLI.
+A CLI tool that converts vulnerability scanner exports into a FedRAMP-compliant POA&M, manages the full finding lifecycle, and generates FedRAMP 20x Vulnerability Detection and Response (VDR) reports.
 
 ---
 
@@ -112,6 +112,41 @@ python3 grc_tool.py conmon --poam master_poam.xlsx --month 2026-04 --output apri
 
 ---
 
+### vdr
+Generates a FedRAMP 20x VDR report from your existing POA&M. Produces two sheets — **Active Vulnerabilities (VDR-RPT-VDT)** and **Accepted Vulnerabilities (VDR-RPT-AVI)** — and outputs both Excel and JSON. The JSON can be served via any HTTP endpoint to satisfy the FedRAMP 20x API requirement.
+
+- Live **CISA KEV** and **EPSS** lookups for accurate LEV/NLEV classification
+- **N1–N5 adverse impact** auto-calculated and adjusted for KEV and IRV+LEV combinations
+- **Evaluation deadlines** tracked per baseline — missed windows flagged as Overdue
+- Findings open 192+ days are auto-moved to Accepted per VDR-TFR-MAV
+
+```bash
+python3 grc_tool.py vdr --poam master_poam.xlsx
+python3 grc_tool.py vdr --poam master_poam.xlsx --baseline high --output vdr_submission.xlsx
+```
+
+Required update frequency by baseline: `low` = Monthly · `moderate` = Every 14 days · `high` = Weekly
+
+Evaluation deadline window by baseline: `low` = 7 days · `moderate` = 5 days · `high` = 2 days from detection
+
+---
+
+### vdr-status
+A quick daily health check that tells you what needs attention before you start your day. No files are generated — just a status output. Run this every morning.
+
+Shows:
+- CISA KEV findings requiring immediate action
+- Findings that missed their evaluation deadline
+- Remediation overdue count
+- When your next VDR submission is due
+
+```bash
+python3 grc_tool.py vdr-status --poam master_poam.xlsx
+python3 grc_tool.py vdr-status --poam master_poam.xlsx --baseline high
+```
+
+---
+
 ### export — Submitting to an Assessor
 Generate a clean, assessor-ready POA&M with only the two official FedRAMP sheets (Open and Closed POA&M Items). No internal report sheets.
 
@@ -127,29 +162,35 @@ Hand the assessor the exported file. It follows the official FedRAMP POA&M templ
 ## Daily Workflow
 
 ```bash
-# 1. Import new scans
+# 1. Morning check — CISA KEV, eval deadlines, next VDR due
+python3 grc_tool.py vdr-status --poam master_poam.xlsx --baseline moderate
+
+# 2. Import new scans
 python3 grc_tool.py convert --input nessus_scan.csv --scanner nessus --output master_poam.xlsx
 python3 grc_tool.py convert --input wiz_export.csv --scanner wiz --output master_poam.xlsx
 
-# 2. Enrich with NIST controls
+# 3. Enrich with NIST controls
 python3 grc_tool.py enrich --poam master_poam.xlsx
 
-# 3. Check status
+# 4. Check status
 python3 grc_tool.py dashboard --poam master_poam.xlsx
 
-# 4. Close a patched finding
+# 5. Close a patched finding
 python3 grc_tool.py close --poam master_poam.xlsx --id POAM-0003 --method "Patch applied"
 
-# 5. Mark a false positive
+# 6. Mark a false positive
 python3 grc_tool.py deviation --poam master_poam.xlsx --id POAM-0007 --type fp --rationale "Not exploitable in this environment"
 
-# 6. End of month — ConMon report
+# 7. End of month — ConMon report
 python3 grc_tool.py conmon --poam master_poam.xlsx --month 2026-04
 
-# 7. Quarterly — executive summary
+# 8. Quarterly — executive summary
 python3 grc_tool.py report --poam master_poam.xlsx --output q2_report.xlsx
 
-# 8. Audit submission
+# 9. FedRAMP 20x VDR submission
+python3 grc_tool.py vdr --poam master_poam.xlsx --baseline moderate --output vdr_submission.xlsx
+
+# 10. Traditional audit submission (Rev5 / POA&M)
 python3 grc_tool.py export --poam master_poam.xlsx --output fedramp_submission.xlsx
 ```
 

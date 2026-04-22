@@ -1,27 +1,3 @@
-"""
-grc_tool.py — FedRAMP GRC CLI tool for POA&M management.
-
-Commands:
-  convert    Import scanner findings into a master POA&M
-  enrich     Add NIST 800-53 control mappings and AI remediation text
-  close      Move a finding to the Closed sheet
-  update     Update fields on an open finding
-  deviation  Mark a finding as False Positive or Operational Requirement
-  dashboard  Print a CLI status summary
-  report     Generate an Excel executive summary report
-  conmon     Generate a monthly Continuous Monitoring report
-
-Usage examples:
-  python3 grc_tool.py convert --input scan.csv --scanner nessus --output master_poam.xlsx
-  python3 grc_tool.py enrich --poam master_poam.xlsx --ai
-  python3 grc_tool.py dashboard --poam master_poam.xlsx
-  python3 grc_tool.py close --poam master_poam.xlsx --id POAM-0003 --method "Patched"
-  python3 grc_tool.py deviation --poam master_poam.xlsx --id POAM-0009 --type fp --rationale "Not exploitable"
-  python3 grc_tool.py update --poam master_poam.xlsx --id POAM-0001 --milestone "Scheduled 2026-05-01" --poc "Jane Smith"
-  python3 grc_tool.py conmon --poam master_poam.xlsx --month 2026-04
-  python3 grc_tool.py report --poam master_poam.xlsx
-"""
-
 import argparse
 import sys
 from datetime import datetime, date, timedelta
@@ -47,11 +23,6 @@ except ImportError:
     sys.exit(1)
 
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-# Column index lookup — never hard-code column numbers
 COL = {name: idx + 1 for idx, name in enumerate(POAM_COLUMNS)}
 
 SCANNER_LABELS = {
@@ -62,8 +33,6 @@ SCANNER_LABELS = {
     "generic": "Vulnerability Scanner",
 }
 
-# NIST 800-53 keyword → control mapping
-# Each entry: (set_of_keywords, list_of_controls)
 NIST_KEYWORD_MAP = [
     ({"cve-", "patch", "unpatched", "outdated", "end-of-life", "eol",
       "upgrade", "update required", "out of date"},
@@ -142,10 +111,6 @@ NIST_KEYWORD_MAP = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Core helpers
-# ---------------------------------------------------------------------------
-
 def load_poam(path):
     p = Path(path)
     if not p.exists():
@@ -191,7 +156,6 @@ def find_row_by_id(ws, poam_id):
 
 
 def normalize_id(raw_id):
-    """Accept POAM-0001, 0001, or 1 — always return POAM-XXXX format."""
     raw = raw_id.strip().upper()
     if raw.startswith("POAM-"):
         return raw
@@ -207,14 +171,12 @@ def map_controls(title, description, cve):
     for keywords, ctrl_list in NIST_KEYWORD_MAP:
         if any(kw in text for kw in keywords):
             controls.extend(ctrl_list)
-    # Always add SI-2/RA-5 if there's a CVE
     if cve and cve.upper().startswith("CVE-"):
         controls.extend(["SI-2", "RA-5"])
     return ", ".join(sorted(set(controls))) if controls else ""
 
 
 def parse_date(val):
-    """Parse a date value from openpyxl (string or datetime)."""
     if val is None:
         return None
     if isinstance(val, (datetime, date)):
@@ -268,10 +230,6 @@ def apply_row_style(ws, row_num, severity):
             cell.font = Font(bold=True, name="Calibri", size=10)
 
 
-# ---------------------------------------------------------------------------
-# Subcommand: convert
-# ---------------------------------------------------------------------------
-
 def cmd_convert(args):
     input_path = Path(args.input)
     if not input_path.exists():
@@ -302,10 +260,6 @@ def cmd_convert(args):
     build_poam_excel(findings, SCANNER_LABELS[args.scanner], args.output)
 
 
-# ---------------------------------------------------------------------------
-# Subcommand: enrich
-# ---------------------------------------------------------------------------
-
 def cmd_enrich(args):
     wb, ws_open, _ = load_poam(args.poam)
     today_str = date.today().strftime("%Y-%m-%d")
@@ -330,7 +284,6 @@ def cmd_enrich(args):
         cve = ws_open.cell(row=row_num, column=COL["CVE"]).value or ""
         existing_controls = ws_open.cell(row=row_num, column=COL["Controls"]).value
 
-        # NIST control mapping — only if currently empty
         if not existing_controls:
             mapped = map_controls(title, desc, cve)
             if mapped:
@@ -339,7 +292,6 @@ def cmd_enrich(args):
         else:
             skipped_controls += 1
 
-        # AI remediation — only if --ai flag and currently empty
         if args.ai and not ollama_unavailable:
             existing_remediation = ws_open.cell(row=row_num, column=COL["Overall Remediation Plan"]).value
             if not existing_remediation:
@@ -370,10 +322,6 @@ def cmd_enrich(args):
         print(f"  AI remediation skipped (already set): {skipped_ai}")
 
 
-# ---------------------------------------------------------------------------
-# Subcommand: close
-# ---------------------------------------------------------------------------
-
 def cmd_close(args):
     poam_id = normalize_id(args.poam_id)
     wb, ws_open, ws_closed = load_poam(args.poam)
@@ -386,25 +334,19 @@ def cmd_close(args):
     severity = row_dict.get("Original Risk Rating", "")
     closure_note = f"Closed: {args.method} on {args.close_date}"
 
-    # Find next empty row in closed sheet
     closed_row = ws_closed.max_row + 1
-    # If sheet is empty except header, start at row 2
     if closed_row == 1:
         closed_row = 2
 
-    # Copy all values to closed sheet
     for col_name in POAM_COLUMNS:
         val = row_dict.get(col_name, "")
         ws_closed.cell(row=closed_row, column=COL[col_name]).value = val
 
-    # Update closure fields
     ws_closed.cell(row=closed_row, column=COL["Status Date"]).value = args.close_date
     ws_closed.cell(row=closed_row, column=COL["Comments"]).value = closure_note
 
-    # Apply styling to closed row
     apply_row_style(ws_closed, closed_row, severity)
 
-    # Delete from open sheet
     ws_open.delete_rows(row_num)
 
     save_poam(wb, args.poam)
@@ -412,10 +354,6 @@ def cmd_close(args):
     print(f"  Method: {args.method}")
     print(f"  Date:   {args.close_date}")
 
-
-# ---------------------------------------------------------------------------
-# Subcommand: update
-# ---------------------------------------------------------------------------
 
 def cmd_update(args):
     poam_id = normalize_id(args.poam_id)
@@ -442,13 +380,11 @@ def cmd_update(args):
         updated.append(f"Last Vendor Check-in Date = {args.vendor_date}")
 
     if args.status:
-        # Status text goes into Comments with a prefix tag
         existing = ws_open.cell(row=row_num, column=COL["Comments"]).value or ""
         status_entry = f"[STATUS {today_str}: {args.status}]"
         ws_open.cell(row=row_num, column=COL["Comments"]).value = f"{status_entry} {existing}".strip()
         updated.append(f"Status = {args.status}")
 
-    # Always update Status Date
     ws_open.cell(row=row_num, column=COL["Status Date"]).value = today_str
 
     save_poam(wb, args.poam)
@@ -460,10 +396,6 @@ def cmd_update(args):
     else:
         print(f"No fields specified to update for {poam_id}. Use --milestone, --poc, --vendor-date, or --status.")
 
-
-# ---------------------------------------------------------------------------
-# Subcommand: deviation
-# ---------------------------------------------------------------------------
 
 def cmd_deviation(args):
     poam_id = normalize_id(args.poam_id)
@@ -493,10 +425,6 @@ def cmd_deviation(args):
     print(f"  Rationale: {args.rationale}")
 
 
-# ---------------------------------------------------------------------------
-# Subcommand: dashboard
-# ---------------------------------------------------------------------------
-
 def cmd_dashboard(args):
     wb, ws_open, ws_closed = load_poam(args.poam)
     open_rows = get_all_rows(ws_open)
@@ -513,7 +441,6 @@ def cmd_dashboard(args):
 
     sev_counts = Counter(r.get("Original Risk Rating", "Unknown") for r in open_rows)
 
-    # Top 5 oldest open findings
     dated = [(r, parse_date(r.get("Original Detection Date"))) for r in open_rows]
     dated = [(r, d) for r, d in dated if d is not None]
     dated.sort(key=lambda x: x[1])
@@ -548,10 +475,6 @@ def cmd_dashboard(args):
     print("=" * w)
 
 
-# ---------------------------------------------------------------------------
-# Subcommand: report
-# ---------------------------------------------------------------------------
-
 def cmd_report(args):
     wb_src, ws_open, ws_closed = load_poam(args.poam)
     open_rows = get_all_rows(ws_open)
@@ -563,7 +486,6 @@ def cmd_report(args):
     wb = openpyxl.Workbook()
     col_widths = _col_widths()
 
-    # ---- Sheet 1: Summary ----
     ws_sum = wb.active
     ws_sum.title = "Summary"
 
@@ -585,7 +507,6 @@ def cmd_report(args):
             cell.fill = PatternFill(start_color=fill_color, end_color=fill_color, fill_type="solid")
         return cell
 
-    # Summary header
     ws_sum.row_dimensions[1].height = 24
     for col, header in enumerate(["Severity", "Open", "Closed", "Total"], start=1):
         hcell(ws_sum, 1, col, header)
@@ -603,21 +524,18 @@ def cmd_report(args):
         dcell(ws_sum, row, 4, open_sev.get(sev, 0) + closed_sev.get(sev, 0))
         row += 1
 
-    # Totals row
     dcell(ws_sum, row, 1, "TOTAL", bold=True)
     dcell(ws_sum, row, 2, len(open_rows), bold=True)
     dcell(ws_sum, row, 3, len(closed_rows), bold=True)
     dcell(ws_sum, row, 4, len(open_rows) + len(closed_rows), bold=True)
     row += 2
 
-    # Overdue stats
     overdue_count = sum(1 for r in open_rows if is_overdue(r.get("Scheduled Completion Date")))
     overdue_pct = round(overdue_count / len(open_rows) * 100, 1) if open_rows else 0
     ws_sum.cell(row=row, column=1, value="Overdue Findings").font = Font(bold=True, name="Calibri")
     ws_sum.cell(row=row, column=2, value=overdue_count)
     ws_sum.cell(row=row, column=3, value=f"{overdue_pct}% of open")
 
-    # ---- Sheet 2: Aging ----
     ws_age = wb.create_sheet("Aging")
     age_headers = ["POA&M ID", "Weakness Name", "Asset Identifier", "Original Risk Rating",
                    "Original Detection Date", "Scheduled Completion Date", "Days Overdue"]
@@ -643,7 +561,6 @@ def cmd_report(args):
             cell = ws_age.cell(row=row_idx, column=col, value=val)
             cell.border = THIN_BORDER
             cell.alignment = Alignment(vertical="top", wrap_text=True)
-        # Color days overdue
         d_cell = ws_age.cell(row=row_idx, column=7)
         if d_over > 90:
             d_cell.fill = PatternFill(start_color="FF0000", end_color="FF0000", fill_type="solid")
@@ -655,7 +572,6 @@ def cmd_report(args):
         else:
             d_cell.fill = PatternFill(start_color="00CC00", end_color="00CC00", fill_type="solid")
 
-    # ---- Sheet 3: By Scanner ----
     ws_scan = wb.create_sheet("By Scanner")
     scan_headers = ["Scanner", "POA&M ID", "Weakness Name", "Original Risk Rating", "Scheduled Completion Date"]
     for col, h in enumerate(scan_headers, start=1):
@@ -664,7 +580,6 @@ def cmd_report(args):
     ws_scan.row_dimensions[1].height = 24
     ws_scan.freeze_panes = "A2"
 
-    # Sort by scanner then severity
     sev_order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
     scanner_rows = sorted(
         open_rows,
@@ -691,10 +606,6 @@ def cmd_report(args):
         print(f"ERROR: Cannot save — is {output} open in Excel?")
         sys.exit(1)
 
-
-# ---------------------------------------------------------------------------
-# Subcommand: conmon
-# ---------------------------------------------------------------------------
 
 def cmd_conmon(args):
     wb_src, ws_open, ws_closed = load_poam(args.poam)
@@ -728,7 +639,6 @@ def cmd_conmon(args):
 
     def build_sheet(ws, title_text, rows):
         ws.title = title_text
-        # Cover row
         ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(POAM_COLUMNS))
         cover = ws.cell(row=1, column=1,
                         value=f"ConMon Report — Month: {month_prefix} | Generated: {today} | System: {Path(args.poam).name}")
@@ -738,7 +648,6 @@ def cmd_conmon(args):
         cover.alignment = Alignment(horizontal="center", vertical="center")
         ws.row_dimensions[1].height = 24
 
-        # Header row
         for col_idx, col_name in enumerate(POAM_COLUMNS, start=1):
             cell = ws.cell(row=2, column=col_idx, value=col_name)
             cell.fill = HEADER_FILL
@@ -777,10 +686,6 @@ def cmd_conmon(args):
         sys.exit(1)
 
 
-# ---------------------------------------------------------------------------
-# Subcommand: export
-# ---------------------------------------------------------------------------
-
 def cmd_export(args):
     wb_src, ws_open, ws_closed = load_poam(args.poam)
     today = date.today()
@@ -790,7 +695,6 @@ def cmd_export(args):
     wb = openpyxl.Workbook()
 
     def copy_sheet(ws_src, ws_dst):
-        # Header row
         for col_idx, col_name in enumerate(POAM_COLUMNS, start=1):
             cell = ws_dst.cell(row=1, column=col_idx, value=col_name)
             cell.fill = HEADER_FILL
@@ -801,7 +705,6 @@ def cmd_export(args):
         ws_dst.row_dimensions[1].height = 30
         ws_dst.freeze_panes = "A2"
 
-        # Data rows
         dst_row = 2
         for src_row in range(2, ws_src.max_row + 1):
             if not any(ws_src.cell(row=src_row, column=c).value for c in range(1, len(POAM_COLUMNS) + 1)):
@@ -838,9 +741,488 @@ def cmd_export(args):
         sys.exit(1)
 
 
-# ---------------------------------------------------------------------------
-# Argument parser + main
-# ---------------------------------------------------------------------------
+SEVERITY_TO_N_RATING = {
+    "Critical": "N4",
+    "High":     "N3",
+    "Medium":   "N2",
+    "Low":      "N1",
+}
+
+N_RATING_ORDER = ["N1", "N2", "N3", "N4", "N5"]
+
+VDR_EVAL_DEADLINE_DAYS = {"low": 7, "moderate": 5, "high": 2}
+
+VDR_UPDATE_FREQ_DAYS = {"low": 30, "moderate": 14, "high": 7}
+
+VDR_ACCEPTANCE_THRESHOLD_DAYS = 192
+
+IRV_KEYWORDS = {
+    "public", "internet", "external", "exposed", "inbound", "0.0.0.0",
+    "unrestricted", "open port", "s3", "bucket", "api gateway", "load balancer",
+    "web server", "http", "https", "cdn", "dns", "cloudfront", "publicly accessible",
+}
+
+VDR_ACTIVE_COLUMNS = [
+    "Tracking ID",
+    "Detection Date",
+    "Detection Source",
+    "Evaluation Deadline",
+    "Evaluation Status",
+    "Internet Reachability",
+    "Likely Exploitability",
+    "CISA KEV",
+    "EPSS Score",
+    "Adverse Impact (N1-N5)",
+    "CVE",
+    "Weakness Name",
+    "Asset Identifier",
+    "Current Status",
+    "Next Milestone",
+    "Scheduled Completion Date",
+    "Overdue Explanation",
+    "Supplementary Risk Info",
+    "Disposition",
+]
+
+VDR_ACCEPTED_COLUMNS = [
+    "Tracking ID",
+    "Detection Date",
+    "Detection Source",
+    "Evaluation Deadline",
+    "Internet Reachability",
+    "Likely Exploitability",
+    "CISA KEV",
+    "EPSS Score",
+    "Current Adverse Impact (N1-N5)",
+    "CVE",
+    "Weakness Name",
+    "Asset Identifier",
+    "Acceptance Rationale",
+    "Agency Mitigation Guidance",
+]
+
+N_COLORS = {
+    "N5": "FF0000",
+    "N4": "FF4500",
+    "N3": "FF6600",
+    "N2": "FFCC00",
+    "N1": "00CC00",
+}
+
+
+def _fetch_cisa_kev():
+    try:
+        import requests
+        resp = requests.get(
+            "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return {v["cveID"].upper() for v in data.get("vulnerabilities", [])}
+    except Exception:
+        return set()
+
+
+def _fetch_epss_scores(cve_list):
+    scores = {}
+    cves = [c.upper() for c in cve_list if c and c.upper().startswith("CVE-")]
+    if not cves:
+        return scores
+    try:
+        import requests
+        for i in range(0, len(cves), 100):
+            batch = cves[i:i + 100]
+            params = {"cve": ",".join(batch)}
+            resp = requests.get("https://api.first.org/data/v1/epss", params=params, timeout=15)
+            resp.raise_for_status()
+            for entry in resp.json().get("data", []):
+                scores[entry["cve"].upper()] = round(float(entry["epss"]), 4)
+    except Exception:
+        pass
+    return scores
+
+
+def _derive_irv(title, description):
+    text = f"{title} {description}".lower()
+    return "IRV" if any(kw in text for kw in IRV_KEYWORDS) else "NIRV"
+
+
+def _derive_lev(severity, cve, kev_set, epss_scores):
+    cve_upper = (cve or "").upper()
+    if cve_upper and cve_upper in kev_set:
+        return "LEV"
+    if cve_upper and epss_scores.get(cve_upper, 0) >= 0.10:
+        return "LEV"
+    if severity in ("Critical", "High") and cve:
+        return "LEV"
+    return "NLEV"
+
+
+def _derive_n_rating(severity, irv, lev, in_kev):
+    base = SEVERITY_TO_N_RATING.get(severity, "N2")
+    idx = N_RATING_ORDER.index(base)
+    if in_kev:
+        idx = max(idx, N_RATING_ORDER.index("N3"))
+    if irv == "IRV" and lev == "LEV":
+        idx = min(idx + 1, len(N_RATING_ORDER) - 1)
+    return N_RATING_ORDER[idx]
+
+
+def _eval_deadline(detection_date, baseline):
+    d = parse_date(detection_date)
+    if d is None:
+        return ""
+    deadline = d + timedelta(days=VDR_EVAL_DEADLINE_DAYS.get(baseline, 5))
+    return deadline.strftime("%Y-%m-%d")
+
+
+def _eval_status(eval_deadline_str):
+    d = parse_date(eval_deadline_str)
+    if d is None:
+        return ""
+    return "Overdue" if date.today() > d else "On Track"
+
+
+def _build_vdr_records(open_rows, baseline, kev_set, epss_scores):
+    today = date.today()
+    active = []
+    accepted = []
+
+    for r in open_rows:
+        detection_date = parse_date(r.get("Original Detection Date"))
+        age_days = (today - detection_date).days if detection_date else 0
+        is_fp = str(r.get("False Positive") or "").strip().lower() == "yes"
+        is_or = str(r.get("Operational Requirement") or "").strip().lower() == "yes"
+
+        sev = r.get("Original Risk Rating", "")
+        title = r.get("Weakness Name") or ""
+        desc = r.get("Weakness Description") or ""
+        cve = (r.get("CVE") or "").strip()
+        cve_upper = cve.upper()
+
+        irv = _derive_irv(title, desc)
+        in_kev = bool(cve_upper and cve_upper in kev_set)
+        lev = _derive_lev(sev, cve, kev_set, epss_scores)
+        n_rating = _derive_n_rating(sev, irv, lev, in_kev)
+        epss = epss_scores.get(cve_upper, "") if cve_upper else ""
+        eval_deadline = _eval_deadline(r.get("Original Detection Date"), baseline)
+        eval_status = _eval_status(eval_deadline)
+        overdue_days = days_overdue(r.get("Scheduled Completion Date"))
+        overdue_explanation = (
+            f"Remediation is {overdue_days} days past scheduled completion date."
+            if overdue_days > 0 else ""
+        )
+
+        record = {
+            **r,
+            "_irv": irv,
+            "_lev": lev,
+            "_n_rating": n_rating,
+            "_in_kev": in_kev,
+            "_epss": epss,
+            "_eval_deadline": eval_deadline,
+            "_eval_status": eval_status,
+            "_overdue_explanation": overdue_explanation,
+            "_age_days": age_days,
+        }
+
+        if age_days >= VDR_ACCEPTANCE_THRESHOLD_DAYS or is_fp or is_or:
+            accepted.append(record)
+        else:
+            active.append(record)
+
+    return active, accepted
+
+
+def _write_vdr_header(ws, columns):
+    for col_idx, col_name in enumerate(columns, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=col_name)
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = THIN_BORDER
+        ws.column_dimensions[get_column_letter(col_idx)].width = 20
+    ws.row_dimensions[1].height = 30
+    ws.freeze_panes = "A2"
+
+
+def _style_vdr_row(ws, row_num, n_rating, columns, eval_status=None):
+    color = N_COLORS.get(n_rating, "FFFFFF")
+    n_fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+    red_fill = PatternFill(start_color="FF0000", end_color="FF0000", fill_type="solid")
+    kev_fill = PatternFill(start_color="8B0000", end_color="8B0000", fill_type="solid")
+
+    for col_idx, col_name in enumerate(columns, start=1):
+        cell = ws.cell(row=row_num, column=col_idx)
+        cell.border = THIN_BORDER
+        cell.alignment = Alignment(vertical="top", wrap_text=True)
+        if col_name in ("Adverse Impact (N1-N5)", "Current Adverse Impact (N1-N5)"):
+            cell.fill = n_fill
+            cell.font = Font(bold=True, name="Calibri", size=10)
+        elif col_name == "Evaluation Status" and eval_status == "Overdue":
+            cell.fill = red_fill
+            cell.font = Font(bold=True, color="FFFFFF", name="Calibri", size=10)
+        elif col_name == "CISA KEV" and cell.value == "Yes":
+            cell.fill = kev_fill
+            cell.font = Font(bold=True, color="FFFFFF", name="Calibri", size=10)
+
+
+def cmd_vdr(args):
+    wb_src, ws_open, _ = load_poam(args.poam)
+    open_rows = get_all_rows(ws_open)
+    today = date.today()
+    baseline = args.baseline
+    output_xlsx = args.output or f"vdr_{today.strftime('%Y%m%d')}.xlsx"
+    output_json = output_xlsx.replace(".xlsx", ".json")
+
+    all_cves = [r.get("CVE", "") for r in open_rows if r.get("CVE")]
+
+    print(f"Fetching CISA KEV catalog...")
+    kev_set = _fetch_cisa_kev()
+    if kev_set:
+        print(f"  Loaded {len(kev_set):,} known exploited vulnerabilities.")
+    else:
+        print("  CISA KEV unavailable (offline) — LEV classification will use severity fallback.")
+
+    print(f"Fetching EPSS scores for {len(all_cves)} CVEs...")
+    epss_scores = _fetch_epss_scores(all_cves)
+    if epss_scores:
+        print(f"  Retrieved EPSS scores for {len(epss_scores)} CVEs.")
+    else:
+        print("  EPSS unavailable (offline) — LEV classification will use severity fallback.")
+
+    active, accepted = _build_vdr_records(open_rows, baseline, kev_set, epss_scores)
+
+    kev_count = sum(1 for r in active + accepted if r["_in_kev"])
+    eval_overdue = sum(1 for r in active if r["_eval_status"] == "Overdue")
+
+    wb = openpyxl.Workbook()
+
+    ws_active = wb.active
+    ws_active.title = "Active Vulnerabilities"
+    _write_vdr_header(ws_active, VDR_ACTIVE_COLUMNS)
+
+    for row_idx, r in enumerate(active, start=2):
+        scheduled = r.get("Scheduled Completion Date") or ""
+        row_data = {
+            "Tracking ID":              r.get("POA&M ID", ""),
+            "Detection Date":           r.get("Original Detection Date", ""),
+            "Detection Source":         r.get("Weakness Detector Source", ""),
+            "Evaluation Deadline":      r["_eval_deadline"],
+            "Evaluation Status":        r["_eval_status"],
+            "Internet Reachability":    r["_irv"],
+            "Likely Exploitability":    r["_lev"],
+            "CISA KEV":                 "Yes" if r["_in_kev"] else "No",
+            "EPSS Score":               r["_epss"],
+            "Adverse Impact (N1-N5)":   r["_n_rating"],
+            "CVE":                      r.get("CVE", ""),
+            "Weakness Name":            r.get("Weakness Name", ""),
+            "Asset Identifier":         r.get("Asset Identifier", ""),
+            "Current Status":           r.get("Comments", "") or "Open",
+            "Next Milestone":           r.get("Milestone Changes", "") or str(scheduled),
+            "Scheduled Completion Date": scheduled,
+            "Overdue Explanation":      r["_overdue_explanation"],
+            "Supplementary Risk Info":  r.get("Overall Remediation Plan", ""),
+            "Disposition":              "Active",
+        }
+        for col_idx, col_name in enumerate(VDR_ACTIVE_COLUMNS, start=1):
+            ws_active.cell(row=row_idx, column=col_idx, value=row_data.get(col_name, ""))
+        _style_vdr_row(ws_active, row_idx, r["_n_rating"], VDR_ACTIVE_COLUMNS, r["_eval_status"])
+
+    ws_acc = wb.create_sheet("Accepted Vulnerabilities")
+    _write_vdr_header(ws_acc, VDR_ACCEPTED_COLUMNS)
+
+    for row_idx, r in enumerate(accepted, start=2):
+        is_fp = str(r.get("False Positive") or "").strip().lower() == "yes"
+        is_or = str(r.get("Operational Requirement") or "").strip().lower() == "yes"
+        age_days = r["_age_days"]
+
+        if is_fp:
+            rationale = f"False Positive — {r.get('Deviation Rationale', '')}"
+        elif is_or:
+            rationale = f"Operational Requirement — {r.get('Deviation Rationale', '')}"
+        else:
+            rationale = (
+                f"Finding exceeded {VDR_ACCEPTANCE_THRESHOLD_DAYS}-day remediation threshold "
+                f"({age_days} days since detection). {r.get('Deviation Rationale', '')}"
+            )
+
+        row_data = {
+            "Tracking ID":                    r.get("POA&M ID", ""),
+            "Detection Date":                 r.get("Original Detection Date", ""),
+            "Detection Source":               r.get("Weakness Detector Source", ""),
+            "Evaluation Deadline":            r["_eval_deadline"],
+            "Internet Reachability":          r["_irv"],
+            "Likely Exploitability":          r["_lev"],
+            "CISA KEV":                       "Yes" if r["_in_kev"] else "No",
+            "EPSS Score":                     r["_epss"],
+            "Current Adverse Impact (N1-N5)": r["_n_rating"],
+            "CVE":                            r.get("CVE", ""),
+            "Weakness Name":                  r.get("Weakness Name", ""),
+            "Asset Identifier":               r.get("Asset Identifier", ""),
+            "Acceptance Rationale":           rationale.strip(),
+            "Agency Mitigation Guidance":     r.get("Overall Remediation Plan", ""),
+        }
+        for col_idx, col_name in enumerate(VDR_ACCEPTED_COLUMNS, start=1):
+            ws_acc.cell(row=row_idx, column=col_idx, value=row_data.get(col_name, ""))
+        _style_vdr_row(ws_acc, row_idx, r["_n_rating"], VDR_ACCEPTED_COLUMNS)
+
+    try:
+        wb.save(output_xlsx)
+    except PermissionError:
+        print(f"ERROR: Cannot save — is {output_xlsx} open in Excel?")
+        sys.exit(1)
+
+    import json as _json
+
+    def _serialize(val):
+        if isinstance(val, (datetime, date)):
+            return str(val)
+        return val
+
+    vdr_json = {
+        "generated": str(today),
+        "baseline": baseline,
+        "source_poam": str(args.poam),
+        "update_frequency_days": VDR_UPDATE_FREQ_DAYS[baseline],
+        "active_vulnerabilities": [],
+        "accepted_vulnerabilities": [],
+    }
+
+    for r in active:
+        scheduled = r.get("Scheduled Completion Date") or ""
+        vdr_json["active_vulnerabilities"].append({
+            "tracking_id":           r.get("POA&M ID", ""),
+            "detection_date":        _serialize(r.get("Original Detection Date", "")),
+            "detection_source":      r.get("Weakness Detector Source", ""),
+            "evaluation_deadline":   r["_eval_deadline"],
+            "evaluation_status":     r["_eval_status"],
+            "internet_reachability": r["_irv"],
+            "likely_exploitability": r["_lev"],
+            "cisa_kev":              r["_in_kev"],
+            "epss_score":            r["_epss"],
+            "adverse_impact":        r["_n_rating"],
+            "cve":                   r.get("CVE", ""),
+            "weakness_name":         r.get("Weakness Name", ""),
+            "asset_identifier":      r.get("Asset Identifier", ""),
+            "current_status":        r.get("Comments", "") or "Open",
+            "next_milestone":        r.get("Milestone Changes", "") or _serialize(scheduled),
+            "scheduled_completion":  _serialize(scheduled),
+            "overdue_explanation":   r["_overdue_explanation"],
+            "supplementary_risk":    r.get("Overall Remediation Plan", ""),
+            "disposition":           "Active",
+        })
+
+    for r in accepted:
+        is_fp = str(r.get("False Positive") or "").strip().lower() == "yes"
+        is_or = str(r.get("Operational Requirement") or "").strip().lower() == "yes"
+        age_days = r["_age_days"]
+        if is_fp:
+            rationale = f"False Positive — {r.get('Deviation Rationale', '')}"
+        elif is_or:
+            rationale = f"Operational Requirement — {r.get('Deviation Rationale', '')}"
+        else:
+            rationale = (
+                f"Finding exceeded {VDR_ACCEPTANCE_THRESHOLD_DAYS}-day threshold "
+                f"({age_days} days). {r.get('Deviation Rationale', '')}"
+            )
+        vdr_json["accepted_vulnerabilities"].append({
+            "tracking_id":           r.get("POA&M ID", ""),
+            "detection_date":        _serialize(r.get("Original Detection Date", "")),
+            "detection_source":      r.get("Weakness Detector Source", ""),
+            "evaluation_deadline":   r["_eval_deadline"],
+            "internet_reachability": r["_irv"],
+            "likely_exploitability": r["_lev"],
+            "cisa_kev":              r["_in_kev"],
+            "epss_score":            r["_epss"],
+            "adverse_impact":        r["_n_rating"],
+            "cve":                   r.get("CVE", ""),
+            "weakness_name":         r.get("Weakness Name", ""),
+            "asset_identifier":      r.get("Asset Identifier", ""),
+            "acceptance_rationale":  rationale.strip(),
+            "agency_mitigation":     r.get("Overall Remediation Plan", ""),
+        })
+
+    with open(output_json, "w") as f:
+        _json.dump(vdr_json, f, indent=2, default=str)
+
+    update_label = {
+        "low": "Monthly (every 30 days)",
+        "moderate": "Every 14 days",
+        "high": "Weekly (every 7 days)",
+    }
+    next_due = today + timedelta(days=VDR_UPDATE_FREQ_DAYS[baseline])
+
+    w = 62
+    print("=" * w)
+    print(f"  VDR REPORT — {Path(args.poam).name}")
+    print(f"  Baseline: {baseline.upper()} | Generated: {today}")
+    print("=" * w)
+    print(f"  {'ACTIVE VULNERABILITIES:':<30}{len(active)}")
+    print(f"  {'ACCEPTED VULNERABILITIES:':<30}{len(accepted)}")
+    print(f"  {'CISA KEV FINDINGS:':<30}{kev_count}  {'<-- Immediate action required' if kev_count else ''}")
+    print(f"  {'EVALUATION OVERDUE:':<30}{eval_overdue}")
+    print("-" * w)
+    print(f"  Required update frequency: {update_label[baseline]}")
+    print(f"  Next VDR submission due:   {next_due}")
+    print("-" * w)
+    if kev_count:
+        print("  CISA KEV FINDINGS (Actively Exploited in the Wild)")
+        for r in active + accepted:
+            if r["_in_kev"]:
+                print(f"    {r.get('POA&M ID', '?')}  [{r.get('Original Risk Rating', '?'):<8}]  "
+                      f"{(r.get('Weakness Name') or '')[:40]}  CVE: {r.get('CVE', '')}")
+        print("-" * w)
+    print(f"  Excel: {output_xlsx}")
+    print(f"  JSON:  {output_json}  (serve via API for FedRAMP 20x compliance)")
+    print("=" * w)
+
+
+def cmd_vdr_status(args):
+    wb_src, ws_open, _ = load_poam(args.poam)
+    open_rows = get_all_rows(ws_open)
+    today = date.today()
+    baseline = args.baseline
+
+    all_cves = [r.get("CVE", "") for r in open_rows if r.get("CVE")]
+
+    print("Checking CISA KEV and EPSS...")
+    kev_set = _fetch_cisa_kev()
+    epss_scores = _fetch_epss_scores(all_cves)
+
+    active, accepted = _build_vdr_records(open_rows, baseline, kev_set, epss_scores)
+
+    kev_findings = [r for r in active + accepted if r["_in_kev"]]
+    eval_overdue = [r for r in active if r["_eval_status"] == "Overdue"]
+    rem_overdue = [r for r in active if r["_overdue_explanation"]]
+    next_due = today + timedelta(days=VDR_UPDATE_FREQ_DAYS[baseline])
+
+    w = 62
+    print("=" * w)
+    print(f"  VDR STATUS — {Path(args.poam).name}")
+    print(f"  Baseline: {baseline.upper()} | {today}")
+    print("=" * w)
+    print(f"  {'ACTIVE:':<22}{len(active):<10}{'ACCEPTED:':<18}{len(accepted)}")
+    print(f"  {'CISA KEV:':<22}{len(kev_findings):<10}{'EVAL OVERDUE:':<18}{len(eval_overdue)}")
+    print(f"  {'REMEDIATION OVERDUE:':<22}{len(rem_overdue):<10}{'NEXT VDR DUE:':<18}{next_due}")
+    print("-" * w)
+
+    if kev_findings:
+        print("  [!] CISA KEV — Actively Exploited (Immediate Action Required)")
+        for r in kev_findings:
+            print(f"      {r.get('POA&M ID', '?')}  [{r.get('Original Risk Rating', '?'):<8}]  "
+                  f"{(r.get('Weakness Name') or '')[:38]}  {r.get('CVE', '')}")
+        print("-" * w)
+
+    if eval_overdue:
+        print(f"  [!] EVALUATION DEADLINE OVERDUE ({VDR_EVAL_DEADLINE_DAYS[baseline]}-day window per {baseline} baseline)")
+        for r in eval_overdue:
+            print(f"      {r.get('POA&M ID', '?')}  [{r.get('Original Risk Rating', '?'):<8}]  "
+                  f"Deadline: {r['_eval_deadline']}  {(r.get('Weakness Name') or '')[:30]}")
+
+    print("=" * w)
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -849,27 +1231,23 @@ def main():
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    # convert
     p_conv = sub.add_parser("convert", help="Import scanner findings into POA&M")
     p_conv.add_argument("--input", required=True, help="Scanner export file path")
     p_conv.add_argument("--scanner", required=True,
                         choices=["nessus", "tenable", "qualys", "wiz", "generic"])
     p_conv.add_argument("--output", default="poam_output.xlsx", help="Output POA&M file")
 
-    # enrich
     p_enrich = sub.add_parser("enrich", help="Add NIST 800-53 mappings and AI remediation")
     p_enrich.add_argument("--poam", required=True, help="Path to master POA&M file")
     p_enrich.add_argument("--ai", action="store_true",
                           help="Use Ollama/Mistral to generate remediation text")
 
-    # close
     p_close = sub.add_parser("close", help="Move a finding to Closed sheet")
     p_close.add_argument("--poam", required=True)
     p_close.add_argument("--id", required=True, dest="poam_id", help="POA&M ID (e.g. POAM-0003)")
     p_close.add_argument("--date", default=date.today().strftime("%Y-%m-%d"), dest="close_date")
     p_close.add_argument("--method", default="Remediated", help="Closure method description")
 
-    # update
     p_update = sub.add_parser("update", help="Update fields on an open finding")
     p_update.add_argument("--poam", required=True)
     p_update.add_argument("--id", required=True, dest="poam_id")
@@ -879,7 +1257,6 @@ def main():
                           help="Last vendor check-in date (YYYY-MM-DD)")
     p_update.add_argument("--status", default=None, help="Status text (appended to Comments)")
 
-    # deviation
     p_dev = sub.add_parser("deviation", help="Mark finding as False Positive or Operational Requirement")
     p_dev.add_argument("--poam", required=True)
     p_dev.add_argument("--id", required=True, dest="poam_id")
@@ -887,25 +1264,31 @@ def main():
                        help="fp = False Positive, or = Operational Requirement")
     p_dev.add_argument("--rationale", required=True, help="Written justification")
 
-    # dashboard
     p_dash = sub.add_parser("dashboard", help="Print CLI health dashboard")
     p_dash.add_argument("--poam", required=True)
 
-    # report
     p_report = sub.add_parser("report", help="Generate Excel executive summary")
     p_report.add_argument("--poam", required=True)
     p_report.add_argument("--output", default=None, help="Output file (default: grc_report_YYYYMMDD.xlsx)")
 
-    # conmon
     p_conmon = sub.add_parser("conmon", help="Generate monthly ConMon report")
     p_conmon.add_argument("--poam", required=True)
     p_conmon.add_argument("--month", default=None, help="Month in YYYY-MM format (default: current month)")
     p_conmon.add_argument("--output", default=None, help="Output file (default: conmon_YYYY_MM.xlsx)")
 
-    # export
     p_export = sub.add_parser("export", help="Export clean FedRAMP POA&M for assessor submission")
     p_export.add_argument("--poam", required=True)
     p_export.add_argument("--output", default=None, help="Output file (default: fedramp_poam_YYYYMMDD.xlsx)")
+
+    p_vdr = sub.add_parser("vdr", help="Generate FedRAMP 20x VDR report (Excel + JSON)")
+    p_vdr.add_argument("--poam", required=True)
+    p_vdr.add_argument("--baseline", default="moderate", choices=["low", "moderate", "high"],
+                       help="FedRAMP baseline (default: moderate)")
+    p_vdr.add_argument("--output", default=None, help="Output file (default: vdr_YYYYMMDD.xlsx)")
+
+    p_vdrs = sub.add_parser("vdr-status", help="Quick VDR health check — CISA KEV, eval deadlines, next due date")
+    p_vdrs.add_argument("--poam", required=True)
+    p_vdrs.add_argument("--baseline", default="moderate", choices=["low", "moderate", "high"])
 
     args = parser.parse_args()
 
@@ -919,6 +1302,8 @@ def main():
         "report": cmd_report,
         "conmon": cmd_conmon,
         "export": cmd_export,
+        "vdr": cmd_vdr,
+        "vdr-status": cmd_vdr_status,
     }
     dispatch[args.command](args)
 
