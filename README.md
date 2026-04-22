@@ -1,6 +1,6 @@
-# FedRAMP POA&M & 20x VDR Automation Tool
+# FedRAMP POA&M & VDR Automation Tool
 
-A CLI tool that converts vulnerability scanner exports into a FedRAMP-compliant POA&M, manages the full finding lifecycle, and generates FedRAMP 20x Vulnerability Detection and Response (VDR) reports.
+A CLI tool that converts vulnerability scanner exports into a FedRAMP-compliant POA&M, manages the full finding lifecycle, generates FedRAMP 20x VDR reports, and produces per-release Product Vulnerability Disclosure Reports for customer-facing transparency.
 
 ---
 
@@ -147,6 +147,24 @@ python3 grc_tool.py vdr-status --poam master_poam.xlsx --baseline high
 
 ---
 
+### product-vdr
+Generate a per-release Product Vulnerability Disclosure Report — the format used by open source projects like curl to tell customers exactly what vulnerabilities exist in a given version of their software, which are fixed, and which are still open. This answers "Is this product safe to use today?"
+
+Unlike the FedRAMP 20x VDR (which is a compliance report for FedRAMP reviewers), the Product VDR is customer-facing. You publish it alongside each release so downstream users can assess their exposure.
+
+- Pulls vulnerability data from your POA&M or a standalone CSV
+- Live **CISA KEV** and **EPSS** enrichment for each CVE
+- Each finding shows: CVE, severity, affected versions, fixed-in version, status, and remediation
+- Color-coded by status: Open (orange), Fixed (green), Mitigated (yellow)
+- Outputs Excel (for sharing) and JSON (for publishing alongside releases or in a security page)
+
+```bash
+python3 grc_tool.py product-vdr --input vulns.csv --product "MyApp" --version "2.1.0"
+python3 grc_tool.py product-vdr --input vulns.csv --product "MyApp" --version "2.1.0" --release-date 2026-04-22
+```
+
+---
+
 ### export — Submitting to an Assessor
 Generate a clean, assessor-ready POA&M with only the two official FedRAMP sheets (Open and Closed POA&M Items). No internal report sheets.
 
@@ -192,6 +210,9 @@ python3 grc_tool.py vdr --poam master_poam.xlsx --baseline moderate --output vdr
 
 # 10. Traditional audit submission (Rev5 / POA&M)
 python3 grc_tool.py export --poam master_poam.xlsx --output fedramp_submission.xlsx
+
+# 11. On product release — publish a Product VDR alongside the release
+python3 grc_tool.py product-vdr --input vulns.csv --product "MyApp" --version "2.1.0"
 ```
 
 ---

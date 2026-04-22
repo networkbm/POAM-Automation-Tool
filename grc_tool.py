@@ -1224,6 +1224,212 @@ def cmd_vdr_status(args):
     print("=" * w)
 
 
+PRODUCT_VDR_COLUMNS = [
+    "CVE",
+    "CWE",
+    "Severity",
+    "CVSS Score",
+    "EPSS Score",
+    "CISA KEV",
+    "Vulnerability Name",
+    "Description",
+    "Affected Versions",
+    "Fixed In Version",
+    "Disclosure Date",
+    "Status",
+    "Remediation",
+    "Reporter",
+]
+
+PRODUCT_VDR_STATUS_COLORS = {
+    "Open":      "FF6600",
+    "Fixed":     "00CC00",
+    "Mitigated": "FFCC00",
+}
+
+
+def _parse_product_vdr_csv(path):
+    import csv
+    records = []
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            records.append({
+                "CVE":               row.get("CVE", "").strip(),
+                "CWE":               row.get("CWE", "").strip(),
+                "Severity":          row.get("Severity", "").strip(),
+                "CVSS Score":        row.get("CVSS", "").strip(),
+                "Vulnerability Name": row.get("Title", "").strip(),
+                "Description":       row.get("Description", "").strip(),
+                "Affected Versions": row.get("Affected_Versions", "").strip(),
+                "Fixed In Version":  row.get("Fixed_In", "").strip(),
+                "Disclosure Date":   row.get("Disclosure_Date", "").strip(),
+                "Status":            row.get("Status", "Open").strip(),
+                "Remediation":       row.get("Remediation", "").strip(),
+                "Reporter":          row.get("Reporter", "").strip(),
+            })
+    return records
+
+
+def cmd_product_vdr(args):
+    import json as _json
+
+    today = date.today()
+    product = args.product
+    version = args.version
+    release_date = args.release_date or str(today)
+    output_xlsx = args.output or f"product_vdr_{product.lower().replace(' ', '_')}_{version}_{today.strftime('%Y%m%d')}.xlsx"
+    output_json = output_xlsx.replace(".xlsx", ".json")
+
+    records = _parse_product_vdr_csv(args.input)
+
+    all_cves = [r["CVE"] for r in records if r.get("CVE")]
+    print(f"Fetching CISA KEV catalog...")
+    kev_set = _fetch_cisa_kev()
+    if kev_set:
+        print(f"  Loaded {len(kev_set):,} known exploited vulnerabilities.")
+    else:
+        print("  CISA KEV unavailable (offline).")
+
+    print(f"Fetching EPSS scores for {len(all_cves)} CVEs...")
+    epss_scores = _fetch_epss_scores(all_cves)
+    if epss_scores:
+        print(f"  Retrieved EPSS scores for {len(epss_scores)} CVEs.")
+    else:
+        print("  EPSS unavailable (offline).")
+
+    for r in records:
+        cve_upper = (r.get("CVE") or "").upper()
+        r["CISA KEV"] = "Yes" if (cve_upper and cve_upper in kev_set) else "No"
+        r["EPSS Score"] = epss_scores.get(cve_upper, "") if cve_upper else ""
+
+    sev_order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+    records.sort(key=lambda r: (
+        0 if r["CISA KEV"] == "Yes" else 1,
+        sev_order.get(r.get("Severity", ""), 99),
+        r.get("Status", ""),
+    ))
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Vulnerability Disclosure"
+
+    title_cell = ws.cell(row=1, column=1,
+        value=f"Product Vulnerability Disclosure Report — {product} v{version} — Released: {release_date} — Generated: {today}")
+    title_cell.font = Font(bold=True, color="FFFFFF", name="Calibri", size=12)
+    title_cell.fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
+    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(PRODUCT_VDR_COLUMNS))
+    ws.row_dimensions[1].height = 28
+
+    for col_idx, col_name in enumerate(PRODUCT_VDR_COLUMNS, start=1):
+        cell = ws.cell(row=2, column=col_idx, value=col_name)
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = THIN_BORDER
+
+    col_w = {
+        "CVE": 18, "CWE": 12, "Severity": 12, "CVSS Score": 12, "EPSS Score": 12,
+        "CISA KEV": 10, "Vulnerability Name": 40, "Description": 50,
+        "Affected Versions": 20, "Fixed In Version": 18, "Disclosure Date": 16,
+        "Status": 12, "Remediation": 40, "Reporter": 20,
+    }
+    for col_idx, col_name in enumerate(PRODUCT_VDR_COLUMNS, start=1):
+        ws.column_dimensions[get_column_letter(col_idx)].width = col_w.get(col_name, 18)
+    ws.row_dimensions[2].height = 28
+    ws.freeze_panes = "A3"
+
+    kev_fill = PatternFill(start_color="8B0000", end_color="8B0000", fill_type="solid")
+
+    for row_idx, r in enumerate(records, start=3):
+        status = r.get("Status", "Open")
+        status_color = PRODUCT_VDR_STATUS_COLORS.get(status, "FFFFFF")
+        sev = r.get("Severity", "")
+        sev_color = SEVERITY_COLORS.get(sev, "FFFFFF")
+
+        for col_idx, col_name in enumerate(PRODUCT_VDR_COLUMNS, start=1):
+            cell = ws.cell(row=row_idx, column=col_idx, value=r.get(col_name, ""))
+            cell.border = THIN_BORDER
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+            if col_name == "Status":
+                cell.fill = PatternFill(start_color=status_color, end_color=status_color, fill_type="solid")
+                cell.font = Font(bold=True, name="Calibri", size=10)
+            elif col_name == "Severity":
+                cell.fill = PatternFill(start_color=sev_color, end_color=sev_color, fill_type="solid")
+                cell.font = Font(bold=True, name="Calibri", size=10)
+            elif col_name == "CISA KEV" and r.get("CISA KEV") == "Yes":
+                cell.fill = kev_fill
+                cell.font = Font(bold=True, color="FFFFFF", name="Calibri", size=10)
+
+    try:
+        wb.save(output_xlsx)
+    except PermissionError:
+        print(f"ERROR: Cannot save — is {output_xlsx} open in Excel?")
+        sys.exit(1)
+
+    json_output = {
+        "bomFormat": "ProductVDR",
+        "specVersion": "1.0",
+        "generated": str(today),
+        "product": product,
+        "version": version,
+        "release_date": release_date,
+        "total_vulnerabilities": len(records),
+        "open_count": sum(1 for r in records if r.get("Status") == "Open"),
+        "fixed_count": sum(1 for r in records if r.get("Status") == "Fixed"),
+        "mitigated_count": sum(1 for r in records if r.get("Status") == "Mitigated"),
+        "cisa_kev_count": sum(1 for r in records if r.get("CISA KEV") == "Yes"),
+        "vulnerabilities": [
+            {
+                "cve":               r.get("CVE", ""),
+                "cwe":               r.get("CWE", ""),
+                "severity":          r.get("Severity", ""),
+                "cvss_score":        r.get("CVSS Score", ""),
+                "epss_score":        r.get("EPSS Score", ""),
+                "cisa_kev":          r.get("CISA KEV") == "Yes",
+                "name":              r.get("Vulnerability Name", ""),
+                "description":       r.get("Description", ""),
+                "affected_versions": r.get("Affected Versions", ""),
+                "fixed_in":          r.get("Fixed In Version", ""),
+                "disclosure_date":   r.get("Disclosure Date", ""),
+                "status":            r.get("Status", ""),
+                "remediation":       r.get("Remediation", ""),
+                "reporter":          r.get("Reporter", ""),
+            }
+            for r in records
+        ],
+    }
+
+    with open(output_json, "w") as f:
+        _json.dump(json_output, f, indent=2)
+
+    open_count = json_output["open_count"]
+    fixed_count = json_output["fixed_count"]
+    kev_count = json_output["cisa_kev_count"]
+
+    w = 62
+    print("=" * w)
+    print(f"  PRODUCT VDR — {product} v{version}")
+    print(f"  Release: {release_date} | Generated: {today}")
+    print("=" * w)
+    print(f"  {'TOTAL VULNERABILITIES:':<30}{len(records)}")
+    print(f"  {'OPEN (Unfixed):':<30}{open_count}{'  <-- Disclose to customers' if open_count else ''}")
+    print(f"  {'FIXED IN THIS RELEASE:':<30}{fixed_count}")
+    print(f"  {'CISA KEV (Active Exploits):':<30}{kev_count}{'  <-- Immediate action required' if kev_count else ''}")
+    print("-" * w)
+    if kev_count:
+        print("  CISA KEV FINDINGS")
+        for r in records:
+            if r.get("CISA KEV") == "Yes":
+                name = r.get("Vulnerability Name", "")[:38]
+                print(f"    [{r.get('Severity', '?'):<8}]  {r.get('CVE', ''):<18}  {name}")
+        print("-" * w)
+    print(f"  Excel: {output_xlsx}")
+    print(f"  JSON:  {output_json}  (publish alongside your release)")
+    print("=" * w)
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="grc_tool",
@@ -1290,6 +1496,14 @@ def main():
     p_vdrs.add_argument("--poam", required=True)
     p_vdrs.add_argument("--baseline", default="moderate", choices=["low", "moderate", "high"])
 
+    p_pvdr = sub.add_parser("product-vdr", help="Generate per-release Product VDR (Excel + JSON) for customer disclosure")
+    p_pvdr.add_argument("--product", required=True, help="Product name (e.g. 'MyApp')")
+    p_pvdr.add_argument("--version", required=True, help="Release version being disclosed (e.g. '2.1.0')")
+    p_pvdr.add_argument("--input", required=True, help="Vulnerability CSV file")
+    p_pvdr.add_argument("--release-date", default=None, dest="release_date",
+                        help="Release date (YYYY-MM-DD, default: today)")
+    p_pvdr.add_argument("--output", default=None, help="Output file (default: product_vdr_<product>_<version>_YYYYMMDD.xlsx)")
+
     args = parser.parse_args()
 
     dispatch = {
@@ -1304,6 +1518,7 @@ def main():
         "export": cmd_export,
         "vdr": cmd_vdr,
         "vdr-status": cmd_vdr_status,
+        "product-vdr": cmd_product_vdr,
     }
     dispatch[args.command](args)
 

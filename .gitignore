@@ -4,6 +4,8 @@ grc_report_*.xlsx
 conmon_*.xlsx
 vdr_*.xlsx
 vdr_*.json
+product_vdr_*.xlsx
+product_vdr_*.json
 test_*.xlsx
 __pycache__/
 *.pyc
