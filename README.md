@@ -150,13 +150,7 @@ python3 grc_tool.py vdr-status --poam master_poam.xlsx --baseline high
 ### product-vdr
 Generate a per-release Product Vulnerability Disclosure Report — the format used by open source projects like curl to tell customers exactly what vulnerabilities exist in a given version of their software, which are fixed, and which are still open. This answers "Is this product safe to use today?"
 
-Unlike the FedRAMP 20x VDR (which is a compliance report for FedRAMP reviewers), the Product VDR is customer-facing. You publish it alongside each release so downstream users can assess their exposure.
-
-- Pulls vulnerability data from your POA&M or a standalone CSV
-- Live **CISA KEV** and **EPSS** enrichment for each CVE
-- Each finding shows: CVE, severity, affected versions, fixed-in version, status, and remediation
-- Color-coded by status: Open (orange), Fixed (green), Mitigated (yellow)
-- Outputs Excel (for sharing) and JSON (for publishing alongside releases or in a security page)
+Unlike the FedRAMP 20x VDR (which is a compliance report for FedRAMP reviewers), the Product VDR is customer-facing. You publish it alongside each release so downstream users can assess their exposure. Outputs Excel and JSON with live CISA KEV and EPSS enrichment on every CVE.
 
 ```bash
 python3 grc_tool.py product-vdr --input vulns.csv --product "MyApp" --version "2.1.0"
